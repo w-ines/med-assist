@@ -1,0 +1,25 @@
+name: Supabase Healthcheck
+
+on:
+  schedule:
+    # Toutes les 6 heures pour garder le projet actif
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Permet de lancer manuellement
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase healthcheck
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "x-healthcheck-secret: ${{ secrets.HEALTHCHECK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            https://ufgdiufjknwgdoolnyme.supabase.co/functions/v1/healthcheck)
+          
+          if [ "$response" -eq 200 ]; then
+            echo "✅ Healthcheck successful"
+          else
+            echo "❌ Healthcheck failed with status: $response"
+            exit 1
+          fi

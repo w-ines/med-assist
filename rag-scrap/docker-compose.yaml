@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  rag-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-scrap-agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    environment:
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ${BACKEND_VOLUME:-./local_storage}:/app/local_storage
+    networks:
+      - rag-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ui-frontend:
+    build:
+      context: ../ui-rag-scrap
+      dockerfile: Dockerfile
+    container_name: ui-rag-scrap
+    ports:
+      - "3000:3000"
+    env_file:
+      - ./.env
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - NEXT_PUBLIC_API_URL=${API_URL:-http://localhost:8000}
+      - BACKEND_API_URL=http://rag-backend:8000/ask
+    depends_on:
+      rag-backend:
+        condition: service_healthy
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # Supabase PostgreSQL Database - DÉSACTIVÉ (utilisation Supabase distant)
+  # supabase-db:
+  #   image: supabase/postgres:15.1.0.117
+  #   container_name: supabase-db
+  #   ports:
+  #     - "54322:5432"
+  #   env_file:
+  #     - ./.env
+  #   environment:
+  #     - POSTGRES_PASSWORD=${SUPABASE_DB_PASSWORD}
+  #     - POSTGRES_DB=${SUPABASE_DB_NAME}
+  #     - POSTGRES_USER=${SUPABASE_DB_USER}
+  #   volumes:
+  #     - supabase_db_data:/var/lib/postgresql/data
+  #   networks:
+  #     - rag-network
+  #   restart: unless-stopped
+
+  # Supabase Studio (UI) - DÉSACTIVÉ (utilisation Supabase distant)
+  # supabase-studio:
+  #   image: supabase/studio:latest
+  #   container_name: supabase-studio
+  #   ports:
+  #     - "54323:3000"
+  #   env_file:
+  #     - ./.env
+  #   environment:
+  #     - SUPABASE_URL=${SUPABASE_URL:-http://localhost:54321}
+  #     - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+  #     - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+  #     - JWT_SECRET=${SUPABASE_JWT_SECRET}
+  #   depends_on:
+  #     - supabase-db
+  #   networks:
+  #     - rag-network
+  #   restart: unless-stopped
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  rag-storage:
+    driver: local
+  supabase_db_data:
+    driver: local
+    
