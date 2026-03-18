@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/Button";
 import { useAgentSteps } from "@/features/rag/hooks/use-agent-steps";
 
 type Props = {
-  onResult: (answer: string) => void;
+  onUserMessage: (userQuery: string) => void;
+  onAssistantResponse: (answer: string) => void;
+  onStep?: (step: string, preview?: string) => void;
   onLoadingChange?: (loading: boolean) => void;
+  conversationId?: string;
 };
 
-export default function SearchForm({ onResult, onLoadingChange }: Props) {
+export default function SearchForm({ onUserMessage, onAssistantResponse, onStep, onLoadingChange, conversationId }: Props) {
   // ============================================================================
   // STATE LOCAL
   // ============================================================================
@@ -37,17 +40,28 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
     // Reset les steps affichés avant de commencer une nouvelle requête
     resetSteps();
     
+    // Sauvegarder query et files avant de les vider
+    const currentQuery = query;
+    const currentFiles = [...files];
+    
+    // Afficher le message utilisateur immédiatement
+    onUserMessage(currentQuery);
+    
+    // Vider l'input et les fichiers immédiatement
+    setQuery("");
+    setFiles([]);
+    
     try {
-      const hasFiles = files.length > 0;
+      const hasFiles = currentFiles.length > 0;
       
       if (hasFiles) {
         // CAS 1: Avec fichiers → Streaming pour voir l'upload + indexation
         console.log("[SearchForm] Mode: Upload + RAG avec streaming");
-        await handleStreamingWithFiles(query, files);
+        await handleStreamingWithFiles(currentQuery, currentFiles);
       } else {
         // CAS 2: Sans fichiers → Streaming aussi (backend retourne NDJSON)
         console.log("[SearchForm] Mode: Web search avec streaming");
-        await handleStreamingJsonQuery(query);
+        await handleStreamingJsonQuery(currentQuery);
       }
     } catch (err) {
       console.error("[SearchForm] Error:", err);
@@ -70,7 +84,10 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ query: userQuery }),
+        body: JSON.stringify({ 
+          query: userQuery,
+          conversation_id: conversationId 
+        }),
       });
 
       if (!response.ok) {
@@ -83,7 +100,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
 
       // Le backend retourne toujours du NDJSON maintenant
       if (contentType.includes("application/x-ndjson")) {
-        await handleNDJSONStream(response);
+        await handleNDJSONStream(response, userQuery);
       } else {
         // Fallback pour compatibilité (ne devrait plus arriver)
         const data = await response.json();
@@ -93,7 +110,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
           updateSteps(data.steps);
         }
         if (data.answer) {
-          onResult(data.answer);
+          onAssistantResponse(data.answer);
         }
       }
       
@@ -111,6 +128,9 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
       // Prépare le FormData avec query + fichiers
       const formData = new FormData();
       formData.append("query", userQuery);
+      if (conversationId) {
+        formData.append("conversation_id", conversationId);
+      }
       for (const file of uploadFiles) {
         formData.append("files", file);
       }
@@ -134,7 +154,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
 
       // Si c'est du NDJSON (streaming), on lit ligne par ligne
       if (contentType.includes("application/x-ndjson") || contentType.includes("text/event-stream")) {
-        await handleNDJSONStream(response);
+        await handleNDJSONStream(response, userQuery);
       } else {
         // Sinon, c'est une réponse JSON classique
         const data = await response.json();
@@ -144,7 +164,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
           updateSteps(data.steps);
         }
         if (data.answer) {
-          onResult(data.answer);
+          onAssistantResponse(data.answer);
         }
       }
       
@@ -157,7 +177,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
   // ============================================================================
   // LECTURE DU STREAM NDJSON (newline-delimited JSON)
   // ============================================================================
-  async function handleNDJSONStream(response: Response) {
+  async function handleNDJSONStream(response: Response, userQuery: string) {
     const reader = response.body?.getReader();
     if (!reader) throw new Error("No reader available");
 
@@ -208,6 +228,11 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
             if (data.step && typeof data.step === "string") {
               console.log("[SearchForm] Adding step:", data.step);
               addStep(data.step);
+              // Appeler onStep pour afficher dans l'interface chatbot
+              if (onStep) {
+                const preview = data.preview && typeof data.preview === "string" ? data.preview : undefined;
+                onStep(data.step, preview);
+              }
             }
 
             // 2. Erreur - handle gracefully without throwing
@@ -259,7 +284,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
       // Affiche la réponse finale
       if (finalAnswer) {
         finishDisplaying(); // Stop showing "Agent is thinking..."
-        onResult(finalAnswer);
+        onAssistantResponse(finalAnswer);
       } else {
         console.warn("[SearchForm] No final answer received from stream");
       }
@@ -269,7 +294,7 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
       // Don't re-throw - set error as final answer
       finishDisplaying();
       const errorMsg = (err as Error).message || "Stream reading failed";
-      onResult(`❌ Error: ${errorMsg}`);
+      onAssistantResponse(`❌ Error: ${errorMsg}`);
       return; // Exit gracefully
     }
   }
@@ -293,16 +318,16 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
   // ============================================================================
   
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       {/* Input Query + Bouton Attach */}
       <div className="flex w-full flex-1 items-center gap-3">
         <div className="relative flex-1">
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask your question..."
+            placeholder="Ask your medical question..."
             aria-label="Query"
-            className="pr-12"
+            style={{ paddingRight: "3rem", fontSize: "0.9375rem" }}
           />
 
           {/* Bouton pour attacher des fichiers (seulement côté client) */}
@@ -322,7 +347,33 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
                 aria-label="Attach files"
                 title={files.length ? `${files.length} file${files.length > 1 ? "s" : ""} selected` : "Attach files"}
                 onClick={() => fileInputRef.current?.click()}
-                className="absolute inset-y-0 right-2 my-auto flex h-8 w-8 items-center justify-center rounded-md text-foreground/60 hover:bg-foreground/10 hover:text-foreground/80"
+                style={{
+                  position: "absolute",
+                  right: "0.5rem",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: "2rem",
+                  height: "2rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: files.length > 0 ? "var(--medical-primary-light)" : "transparent",
+                  color: files.length > 0 ? "var(--medical-primary)" : "var(--medical-gray-600)",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease"
+                }}
+                onMouseEnter={(e) => {
+                  if (files.length === 0) {
+                    e.currentTarget.style.background = "var(--medical-gray-100)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (files.length === 0) {
+                    e.currentTarget.style.background = "transparent";
+                  }
+                }}
               >
                 {/* Icône de trombone */}
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -334,31 +385,54 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
         </div>
 
         {/* Bouton Submit */}
-        <Button type="submit" disabled={!query.trim() && files.length === 0}>
-          Ask
+        <Button 
+          type="submit" 
+          disabled={!query.trim() && files.length === 0}
+          style={{ 
+            minWidth: "120px",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem"
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+          Search
         </Button>
       </div>
 
       {/* Liste des fichiers sélectionnés */}
       {files.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-md border border-foreground/15 bg-background/50 p-3">
-          <div className="text-xs font-medium text-foreground/70">
+        <div className="medical-card" style={{ padding: "1rem", background: "var(--medical-primary-light)" }}>
+          <div style={{ fontSize: "0.8125rem", fontWeight: "600", color: "var(--medical-primary-dark)", marginBottom: "0.75rem" }}>
             {files.length} file{files.length > 1 ? 's' : ''} selected:
           </div>
-          <div className="flex flex-col gap-1.5">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
             {files.map((file, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between gap-2 rounded-md bg-foreground/5 px-3 py-2 text-sm"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "0.5rem",
+                  padding: "0.75rem 1rem",
+                  background: "white",
+                  borderRadius: "8px",
+                  fontSize: "0.875rem",
+                  border: "1px solid var(--medical-gray-200)"
+                }}
               >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0, flex: 1 }}>
                   {/* Icône fichier */}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 text-foreground/60">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--medical-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                     <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
                     <polyline points="14 2 14 8 20 8" />
                   </svg>
-                  <span className="truncate text-foreground/80">{file.name}</span>
-                  <span className="text-xs text-foreground/50 flex-shrink-0">
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--medical-gray-900)" }}>{file.name}</span>
+                  <span style={{ fontSize: "0.75rem", color: "var(--medical-gray-600)", flexShrink: 0 }}>
                     ({formatFileSize(file.size)})
                   </span>
                 </div>
@@ -367,7 +441,24 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
                   type="button"
                   onClick={() => removeFile(index)}
                   aria-label={`Remove ${file.name}`}
-                  className="flex-shrink-0 rounded-md p-1 text-foreground/50 hover:bg-red-500/10 hover:text-red-500 transition-colors"
+                  style={{
+                    flexShrink: 0,
+                    borderRadius: "6px",
+                    padding: "0.25rem",
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--medical-gray-400)",
+                    cursor: "pointer",
+                    transition: "all 0.2s ease"
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#fee2e2";
+                    e.currentTarget.style.color = "var(--medical-error)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "var(--medical-gray-400)";
+                  }}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="18" y1="6" x2="6" y2="18" />
@@ -382,8 +473,15 @@ export default function SearchForm({ onResult, onLoadingChange }: Props) {
 
       {/* Affichage des erreurs */}
       {error ? (
-        <div className="rounded-md border border-red-500/20 bg-red-50/50 dark:bg-red-950/20 p-3 text-sm text-red-600 dark:text-red-400">
-          ❌ {error}
+        <div className="medical-card" style={{ padding: "1rem", background: "#fef2f2", borderColor: "#fecaca" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--medical-error)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span style={{ fontSize: "0.875rem", color: "var(--medical-error)", fontWeight: "500" }}>{error}</span>
+          </div>
         </div>
       ) : null}
     </form>

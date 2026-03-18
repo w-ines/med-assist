@@ -16,13 +16,27 @@ from memory.store import load_history, save_message
 
 
 def _build_llm() -> ChatOpenAI:
-    base_url = os.getenv("BASE_URL") or os.getenv("OPENAI_API_BASE")
-    api_key = os.getenv("OPEN_ROUTER_KEY") or os.getenv("OPENAI_API_KEY")
+    base_url = (
+        os.getenv("BASE_URL")
+        or os.getenv("OPENAI_API_BASE")
+        or os.getenv("OPENAI_BASE_URL")
+    )
     model = os.getenv("OPEN_AI_MODEL") or os.getenv("OPENAI_MODEL")
+    api_key = os.getenv("OPEN_ROUTER_KEY") or os.getenv("OPENAI_API_KEY")
+
     if not api_key:
         raise RuntimeError("Missing OPEN_ROUTER_KEY or OPENAI_API_KEY")
     if not model:
         raise RuntimeError("Missing OPEN_AI_MODEL / OPENAI_MODEL")
+
+    if base_url:
+        base_lower = base_url.lower()
+        # OpenRouter typically requires keys starting with 'sk-or-'.
+        if "openrouter.ai" in base_lower and not api_key.startswith("sk-or-"):
+            raise RuntimeError(
+                "BASE_URL/OPENAI_API_BASE points to OpenRouter, but no OpenRouter key was provided. "
+                "Set OPEN_ROUTER_KEY (sk-or-...) or change BASE_URL to an OpenAI-compatible endpoint for your OPENAI_API_KEY."
+            )
 
     return ChatOpenAI(
         model=model,

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+env/
+ENV/
+
+# Node / frontend
+node_modules/
+.next/
+dist/
+build/
+coverage/
+
+# Local config
+.env
+.env.*
+*.log
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Project-specific
+med-rag/venv/

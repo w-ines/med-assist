@@ -34,14 +34,73 @@ Environment variables (.env):
 
 import os
 import logging
-from typing import Any, Dict, List
+import hashlib
+from typing import Any, Dict, List, Optional
+from datetime import timedelta
 
 import requests
 from dotenv import load_dotenv
 from smolagents import tool
 
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Redis not available. Install with: pip install redis")
+
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Redis Cache Manager
+# =============================================================================
+
+class CacheManager:
+    """Redis cache manager for PubMed queries."""
+    
+    def __init__(self):
+        self.redis_client = None
+        self.enabled = False
+        
+        if REDIS_AVAILABLE:
+            try:
+                redis_url = _env("REDIS_URL", "redis://localhost:6379/0")
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                self.redis_client.ping()
+                self.enabled = True
+                logger.info("✅ Redis cache enabled")
+            except Exception as e:
+                logger.warning(f"Redis connection failed: {e}. Caching disabled.")
+                self.enabled = False
+    
+    def get(self, key: str) -> Optional[str]:
+        """Get cached value."""
+        if not self.enabled:
+            return None
+        try:
+            return self.redis_client.get(key)
+        except Exception as e:
+            logger.warning(f"Cache get error: {e}")
+            return None
+    
+    def set(self, key: str, value: str, ttl: int = 86400):
+        """Set cached value with TTL (default 24h)."""
+        if not self.enabled:
+            return
+        try:
+            self.redis_client.setex(key, ttl, value)
+        except Exception as e:
+            logger.warning(f"Cache set error: {e}")
+    
+    @staticmethod
+    def make_key(prefix: str, *args) -> str:
+        """Generate cache key from arguments."""
+        content = ":".join(str(arg) for arg in args)
+        hash_suffix = hashlib.md5(content.encode()).hexdigest()[:12]
+        return f"{prefix}:{hash_suffix}"
 
 
 # =============================================================================
@@ -54,6 +113,205 @@ def _env(name: str, default: str = "") -> str:
 
 
 # =============================================================================
+# PubMed Search Engine Class
+# =============================================================================
+
+class PubMedSearchEngine:
+    """PubMed search engine with advanced filtering and caching."""
+    
+    def __init__(self, email: Optional[str] = None, api_key: Optional[str] = None):
+        """
+        Initialize PubMed search engine.
+        
+        Args:
+            email: NCBI email (recommended by NCBI)
+            api_key: NCBI API key (increases rate limit to 10 req/s)
+        """
+        self.email = email or _env("NCBI_EMAIL")
+        self.api_key = api_key or _env("NCBI_API_KEY")
+        self.tool_name = _env("NCBI_TOOL", "med-assist")
+        self.base_url = _ncbi_base_url()
+        self.cache = CacheManager()
+    
+    def _add_ncbi_credentials(self, params: Dict[str, Any]) -> None:
+        """Add NCBI credentials to request parameters (in-place)."""
+        if self.email:
+            params["email"] = self.email
+        if self.tool_name:
+            params["tool"] = self.tool_name
+        if self.api_key:
+            params["api_key"] = self.api_key
+    
+    def _build_advanced_query(
+        self,
+        base_query: str,
+        publication_types: Optional[List[str]] = None,
+        journals: Optional[List[str]] = None,
+        language: Optional[str] = None,
+        species: Optional[List[str]] = None,
+    ) -> str:
+        """
+        Build advanced Entrez query with filters.
+        
+        Args:
+            base_query: Base search query
+            publication_types: Filter by publication type (e.g., ["Clinical Trial", "Meta-Analysis"])
+            journals: Filter by journal names (e.g., ["Nature", "Science"])
+            language: Filter by language (e.g., "eng")
+            species: Filter by species (e.g., ["Humans", "Mice"])
+        
+        Returns:
+            Advanced Entrez query string
+        """
+        parts = [base_query]
+        
+        # Publication types filter
+        if publication_types:
+            # Map common names to PubMed publication types
+            type_mapping = {
+                "Clinical Trial": "Clinical Trial",
+                "Meta-Analysis": "Meta-Analysis",
+                "Review": "Review",
+                "Systematic Review": "Systematic Review",
+                "RCT": "Randomized Controlled Trial",
+                "Randomized Controlled Trial": "Randomized Controlled Trial",
+                "Case Reports": "Case Reports",
+                "Research Article": "Journal Article",
+            }
+            mapped_types = [type_mapping.get(pt, pt) for pt in publication_types]
+            type_query = " OR ".join([f'"{t}"[Publication Type]' for t in mapped_types])
+            parts.append(f"({type_query})")
+        
+        # Journals filter
+        if journals:
+            journal_query = " OR ".join([f'"{j}"[Journal]' for j in journals])
+            parts.append(f"({journal_query})")
+        
+        # Language filter
+        if language:
+            parts.append(f"{language}[Language]")
+        
+        # Species filter
+        if species:
+            species_query = " OR ".join([f'"{s}"[Organism]' for s in species])
+            parts.append(f"({species_query})")
+        
+        return " AND ".join(parts)
+    
+    def search(
+        self,
+        query: str,
+        max_results: int = 20,
+        start: int = 0,
+        sort: str = "relevance",
+        mindate: str = "",
+        maxdate: str = "",
+        publication_types: Optional[List[str]] = None,
+        journals: Optional[List[str]] = None,
+        language: Optional[str] = None,
+        species: Optional[List[str]] = None,
+        use_cache: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Search PubMed with advanced filters.
+        
+        Args:
+            query: Base search query
+            max_results: Maximum results to return (1-10000)
+            start: Starting index for pagination
+            sort: Sort order (relevance, pub_date, Author, JournalName)
+            mindate: Minimum publication date (YYYY or YYYY/MM or YYYY/MM/DD)
+            maxdate: Maximum publication date
+            publication_types: Filter by publication types
+            journals: Filter by journal names
+            language: Filter by language code (e.g., "eng")
+            species: Filter by species/organism
+            use_cache: Use Redis cache if available
+        
+        Returns:
+            Dict with PMIDs and metadata
+        """
+        # Build advanced query
+        advanced_query = self._build_advanced_query(
+            query, publication_types, journals, language, species
+        )
+        
+        # Check cache
+        cache_key = None
+        if use_cache:
+            cache_key = self.cache.make_key(
+                "pubmed_search",
+                advanced_query,
+                max_results,
+                start,
+                sort,
+                mindate,
+                maxdate,
+            )
+            cached = self.cache.get(cache_key)
+            if cached:
+                import json
+                logger.info(f"💾 Cache hit for query: {query[:50]}...")
+                return json.loads(cached)
+        
+        # Execute search
+        url = f"{self.base_url}/esearch.fcgi"
+        
+        params = {
+            "db": "pubmed",
+            "term": advanced_query,
+            "retmode": "json",
+            "retmax": max(1, min(int(max_results), 10000)),
+            "retstart": max(0, int(start)),
+        }
+        
+        if sort:
+            params["sort"] = sort
+        
+        if mindate or maxdate:
+            params["datetype"] = "pdat"
+            if mindate:
+                params["mindate"] = mindate
+            if maxdate:
+                params["maxdate"] = maxdate
+        
+        # Add NCBI credentials
+        self._add_ncbi_credentials(params)
+        
+        logger.info(f"🔍 PubMed search: {advanced_query[:80]}... (max={max_results})")
+        
+        response = requests.get(url, params=params, timeout=20)
+        response.raise_for_status()
+        result = response.json()
+        
+        # Cache result
+        if use_cache and cache_key:
+            import json
+            self.cache.set(cache_key, json.dumps(result), ttl=86400)  # 24h
+        
+        return result
+    
+    def fetch_articles(self, pmids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Fetch article details for given PMIDs.
+        
+        Args:
+            pmids: List of PubMed IDs
+        
+        Returns:
+            List of article dictionaries with metadata
+        """
+        if not pmids:
+            return []
+        
+        # Batch fetch (max 200 per request)
+        xml_data = ncbi_fetch(pmids[:200])
+        articles = ncbi_parse_efetch_xml(xml_data)
+        
+        return articles
+
+
+# =============================================================================
 # NCBI E-utilities backend
 # =============================================================================
 
@@ -62,41 +320,8 @@ def _ncbi_base_url() -> str:
     return base.rstrip("/")
 
 
-def ncbi_research(
-    query: str,
-    retmax: int = 20,
-    retstart: int = 0,
-    sort: str = "relevance",
-    mindate: str = "",
-    maxdate: str = "",
-) -> Dict[str, Any]:
-    """
-    Search PubMed via NCBI ESearch API.
-    Returns PMIDs matching the query.
-    """
-    url = f"{_ncbi_base_url()}/esearch.fcgi"
-    
-    params = {
-        "db": "pubmed",
-        "term": query,
-        "retmode": "json",
-        "retmax": max(1, min(int(retmax), 10000)),
-        "retstart": max(0, int(retstart)),
-    }
-    
-    # Sort options: relevance, pub_date, Author, JournalName
-    if sort:
-        params["sort"] = sort
-    
-    # Date filtering
-    if mindate or maxdate:
-        params["datetype"] = "pdat"  # Publication date
-        if mindate:
-            params["mindate"] = mindate
-        if maxdate:
-            params["maxdate"] = maxdate
-    
-    # NCBI recommends identifying your tool
+def _add_ncbi_credentials_to_params(params: Dict[str, Any]) -> None:
+    """Add NCBI credentials to request parameters (in-place). Helper for standalone functions."""
     email = _env("NCBI_EMAIL")
     api_key = _env("NCBI_API_KEY")
     tool_name = _env("NCBI_TOOL", "med-assist")
@@ -107,12 +332,6 @@ def ncbi_research(
         params["tool"] = tool_name
     if api_key:
         params["api_key"] = api_key
-    
-    logger.info(f"🔍 NCBI ESearch: {query[:50]}... (max={retmax}, start={retstart})")
-    
-    response = requests.get(url, params=params, timeout=20)
-    response.raise_for_status()
-    return response.json()
 
 
 def ncbi_fetch(pmids: List[str], rettype: str = "abstract") -> str:
@@ -132,16 +351,8 @@ def ncbi_fetch(pmids: List[str], rettype: str = "abstract") -> str:
         "rettype": rettype,
     }
     
-    email = _env("NCBI_EMAIL")
-    api_key = _env("NCBI_API_KEY")
-    tool_name = _env("NCBI_TOOL", "med-assist")
-    
-    if email:
-        params["email"] = email
-    if tool_name:
-        params["tool"] = tool_name
-    if api_key:
-        params["api_key"] = api_key
+    # Add NCBI credentials
+    _add_ncbi_credentials_to_params(params)
     
     logger.info(f"📄 NCBI EFetch: {len(pmids)} PMIDs")
     
@@ -243,9 +454,13 @@ def search_pubmed(
     mindate: str = "",
     maxdate: str = "",
     fetch_details: bool = True,
+    publication_types: Optional[List[str]] = None,
+    journals: Optional[List[str]] = None,
+    language: str = "",
+    species: Optional[List[str]] = None,
 ) -> dict:
     """
-    Search PubMed for medical literature.
+    Search PubMed for medical literature with advanced filtering.
     
     Args:
         query: Search query (supports PubMed syntax: MeSH terms, [Title/Abstract], etc.)
@@ -256,6 +471,10 @@ def search_pubmed(
         mindate: Minimum publication date (format: YYYY or YYYY/MM or YYYY/MM/DD)
         maxdate: Maximum publication date (format: YYYY or YYYY/MM or YYYY/MM/DD)
         fetch_details: If True, fetch article details (title, abstract, authors)
+        publication_types: Filter by publication types (e.g., ["Clinical Trial", "Meta-Analysis", "Review", "RCT"])
+        journals: Filter by journal names (e.g., ["Nature", "Science", "Cell"])
+        language: Filter by language code (e.g., "eng" for English)
+        species: Filter by species/organism (e.g., ["Humans", "Mice"])
     
     Returns:
         dict: {
@@ -272,7 +491,9 @@ def search_pubmed(
     Examples:
         >>> search_pubmed("alzheimer treatment", max_results=10)
         >>> search_pubmed("COVID-19 vaccine", mindate="2023", maxdate="2024")
-        >>> search_pubmed("cancer[MeSH] AND immunotherapy", sort="pub_date")
+        >>> search_pubmed("cancer immunotherapy", publication_types=["Clinical Trial", "RCT"])
+        >>> search_pubmed("CRISPR", journals=["Nature", "Science"], language="eng")
+        >>> search_pubmed("diabetes", species=["Humans"], publication_types=["Meta-Analysis"])
     """
     use_ncbi_setting = _env("PUBMED_USE_NCBI", "true").lower().strip()
     if use_ncbi_setting in {"false", "0", "no"}:
@@ -296,17 +517,25 @@ def search_pubmed(
     start = max(0, int(start))
     
     try:
-        # Search PubMed via NCBI ESearch
-        esearch_result = ncbi_research(
+        # Initialize search engine
+        engine = PubMedSearchEngine()
+        
+        # Search with advanced filters
+        search_result = engine.search(
             query=query,
-            retmax=max_results,
-            retstart=start,
+            max_results=max_results,
+            start=start,
             sort=sort,
             mindate=mindate,
             maxdate=maxdate,
+            publication_types=publication_types,
+            journals=journals,
+            language=language if language else None,
+            species=species,
+            use_cache=True,
         )
         
-        result = esearch_result.get("esearchresult", {})
+        result = search_result.get("esearchresult", {})
         pmids = result.get("idlist", []) or []
         total = int(result.get("count", 0) or 0)
         
@@ -322,8 +551,7 @@ def search_pubmed(
         
         # Fetch article details if requested
         if fetch_details and pmids:
-            xml_data = ncbi_fetch(pmids)
-            articles = ncbi_parse_efetch_xml(xml_data)
+            articles = engine.fetch_articles(pmids)
             response["articles"] = articles
             logger.info(f"✅ Found {total} results, fetched {len(articles)} articles")
         else:
