@@ -1,0 +1,1 @@
+  # Sub-agent Signaux (détection + consensus)

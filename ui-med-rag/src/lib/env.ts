@@ -1,18 +1,17 @@
-
-type Env = {
-  BACKEND_API_URL: string; // Full URL to your backend RAG endpoint (e.g., https://api.example.com/rag)
-};
-
-function getRequiredEnv(name: keyof Env): string {
-  const value = process.env[name as string];
-  if (!value || value.trim() === "") {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+/**
+ * Get the backend API base URL.
+ * Defaults to http://localhost:8000 if not configured.
+ * 
+ * Note: Uses NEXT_PUBLIC_ prefix for client-side access.
+ */
+export function getApiUrl(): string {
+  return process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
 }
 
-export const env: Env = {
-  BACKEND_API_URL: getRequiredEnv("BACKEND_API_URL"),
-};
-
-
+/**
+ * Get the backend RAG endpoint URL (server-side only).
+ * Used for server-side API routes.
+ */
+export function getRagUrl(): string {
+  return process.env.BACKEND_API_URL || "http://localhost:8000/ask";
+}

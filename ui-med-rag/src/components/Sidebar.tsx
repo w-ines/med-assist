@@ -105,7 +105,7 @@ export default function Sidebar() {
           </div>
           <div>
             <div style={{ color: "#0f172a", fontWeight: "700", fontSize: "1rem", lineHeight: 1.2, letterSpacing: "-0.01em" }}>
-              Med Assist
+              Bio Horizon
             </div>
             <div style={{ color: "#94a3b8", fontSize: "0.6875rem", marginTop: "3px", letterSpacing: "0.02em" }}>
               Biomedical Intelligence

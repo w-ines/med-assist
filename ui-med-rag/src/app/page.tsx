@@ -4,6 +4,40 @@ import Link from "next/link";
 
 const TOOLS = [
   {
+    href: "/signals",
+    label: "Emerging Signals",
+    subtitle: "Temporal Detection",
+    description: "Detect emerging trends in biomedical literature by comparing knowledge graphs over time. Track what's new.",
+    accent: "#ef4444",
+    accentSoft: "rgba(239, 68, 68, 0.08)",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+        <polyline points="17 6 23 6 23 12" />
+      </svg>
+    ),
+  },
+  {
+    href: "/timeline",
+    label: "KG Timeline",
+    subtitle: "Evolution Tracking",
+    description: "Track the evolution of the knowledge graph over time. Compare snapshots and identify what changed.",
+    accent: "#8b5cf6",
+    accentSoft: "rgba(139, 92, 246, 0.08)",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="12" y1="2" x2="12" y2="6" />
+        <line x1="12" y1="18" x2="12" y2="22" />
+        <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+        <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+        <line x1="2" y1="12" x2="6" y2="12" />
+        <line x1="18" y1="12" x2="22" y2="12" />
+        <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
+        <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
+      </svg>
+    ),
+  },
+  {
     href: "/ask",
     label: "RAG Q&A",
     subtitle: "Literature Search",
@@ -58,6 +92,21 @@ const TOOLS = [
       </svg>
     ),
   },
+  {
+    href: "/settings",
+    label: "Settings",
+    subtitle: "Automated Surveillance",
+    description: "Configure watch topics for automated weekly snapshots and signal detection. Set it and forget it.",
+    accent: "#64748b",
+    accentSoft: "rgba(100, 116, 139, 0.08)",
+    icon: (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M12 1v6m0 6v6m-9-9h6m6 0h6" />
+        <path d="M4.93 4.93l4.24 4.24m5.66 5.66l4.24 4.24m0-14.14l-4.24 4.24M9.17 14.83l-4.24 4.24" />
+      </svg>
+    ),
+  },
 ];
 
 export default function DashboardPage() {
@@ -88,7 +137,7 @@ export default function DashboardPage() {
             margin: 0,
             letterSpacing: "-0.02em",
           }}>
-            Med Assist
+            Bio Horizon
           </h1>
         </div>
         <p style={{
