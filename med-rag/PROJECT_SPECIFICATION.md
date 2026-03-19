@@ -544,7 +544,7 @@ med-assist/
 │   │   ├── topic_service.py        ✅    # Gestion des sujets de veille
 │   │   └── user_service.py         ✅    # Gestion préférences utilisateur
 │   │
-│   ├── core/                       ✅    # Configuration
+│   ├── config/                     ✅    # Configuration
 │   │   ├── config.py               ✅    # Variables d'environnement, encodage, CORS
 │   │   └── __init__.py
 │   │
@@ -1219,7 +1219,7 @@ Littérature PubMed (brute)
           │ (entités + relations + PMIDs + consensus)
           ▼
    ┌─────────────┐
-   │  LinkRdata  │  ← PROJET DE SALMA MESMOUDI
+   │  LinkRdata  │  
    │  (KG neuro- │     Intégration multi-échelle +
    │   science   │     liens typés (se-localise, active, corrélé...)
    │   fiable)   │

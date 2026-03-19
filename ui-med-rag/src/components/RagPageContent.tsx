@@ -106,7 +106,7 @@ export default function RagPageContent() {
               </div>
               <div>
                 <h1 style={{ fontSize: "1.125rem", fontWeight: "700", color: "#0f172a", margin: 0, letterSpacing: "-0.025em" }}>
-                  Med Assist Chat
+                  Bio Horizon Chat
                 </h1>
                 <p style={{ fontSize: "0.75rem", color: "#64748b", margin: 0 }}>
                   Conversational AI with RAG

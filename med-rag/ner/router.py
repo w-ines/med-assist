@@ -27,24 +27,51 @@ def extract_from_text(
     text: str,
     *,
     entity_types: Optional[Iterable[str]] = None,
+    custom_labels: Optional[Iterable[str]] = None,
+    enable_assertion: bool = False,
     provider: Optional[str] = None,
 ) -> NerResult:
+    """
+    Extract entities from text.
+    
+    Args:
+        text: Input text
+        entity_types: Standard entity types (DISEASE, DRUG, GENE, etc.)
+        custom_labels: Custom zero-shot labels (BRAIN_REGION, BIOMARKER, etc.)
+        enable_assertion: Whether to compute assertion status (F2c)
+        provider: NER backend to use
+    """
     p = _select_provider(provider)
+    
+    # Use custom labels if provided (zero-shot mode)
+    labels = list(custom_labels) if custom_labels else entity_types
 
     if p == "openmed":
         from ner.backends import openmed_backend
 
-        return openmed_backend.extract(text, entity_types=entity_types)
+        return openmed_backend.extract(
+            text, 
+            entity_types=labels,
+            enable_assertion=enable_assertion,
+            is_custom=bool(custom_labels)
+        )
 
     if p == "gliner":
         from ner.backends import gliner_backend
 
-        return gliner_backend.extract(text, entity_types=entity_types)
+        return gliner_backend.extract(
+            text, 
+            entity_types=labels,
+            enable_assertion=enable_assertion,
+            custom_labels=list(custom_labels) if custom_labels else None
+        )
 
     return NerResult(
-        entities={str(t).strip().upper(): [] for t in (entity_types or []) if str(t).strip()},
+        entities={str(t).strip().upper(): [] for t in (labels or []) if str(t).strip()},
         provider=p,
         error=f"ValueError: Unknown NER provider '{p}'",
+        custom_labels=list(custom_labels) if custom_labels else None,
+        assertion_enabled=enable_assertion,
     )
 
 

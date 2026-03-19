@@ -4,7 +4,7 @@ All route logic lives in api/routes/. This file only wires things together.
 """
 
 # Environment & encoding must be configured before any other import
-from core.config import setup_encoding, patch_json_ascii, setup_logging, get_cors_origins
+from config.config import setup_encoding, patch_json_ascii, setup_logging, get_cors_origins
 setup_encoding()
 patch_json_ascii()
 

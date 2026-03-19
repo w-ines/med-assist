@@ -2,14 +2,24 @@
 
 import { useState } from "react";
 
+// F2a: Standard entity types from spec
 const ENTITY_TYPE_OPTIONS = [
   { label: "Disease", value: "DISEASE", color: "#dc2626", bg: "#fee2e2" },
   { label: "Drug", value: "DRUG", color: "#7c3aed", bg: "#ede9fe" },
   { label: "Gene", value: "GENE", color: "#0066cc", bg: "#e6f2ff" },
-  { label: "Anatomy", value: "ANATOMY", color: "#059669", bg: "#d1fae5" },
-  { label: "Species", value: "SPECIES", color: "#b45309", bg: "#fef3c7" },
-  { label: "Treatment", value: "TREATMENT", color: "#0891b2", bg: "#cffafe" },
+  { label: "Protein", value: "PROTEIN", color: "#059669", bg: "#d1fae5" },
+  { label: "Anatomy", value: "ANATOMY", color: "#b45309", bg: "#fef3c7" },
+  { label: "Chemical", value: "CHEMICAL", color: "#0891b2", bg: "#cffafe" },
+  { label: "Oncology", value: "ONCOLOGY", color: "#ec4899", bg: "#fce7f3" },
 ];
+
+// F2c: Assertion status colors
+const ASSERTION_COLORS: Record<string, { color: string; bg: string }> = {
+  PRESENT: { color: "#059669", bg: "#d1fae5" },
+  NEGATED: { color: "#dc2626", bg: "#fee2e2" },
+  HYPOTHETICAL: { color: "#f59e0b", bg: "#fef3c7" },
+  HISTORICAL: { color: "#6b7280", bg: "#f3f4f6" },
+};
 
 const ENTITY_COLORS: Record<string, { color: string; bg: string }> = Object.fromEntries(
   ENTITY_TYPE_OPTIONS.map((e) => [e.value, { color: e.color, bg: e.bg }])
@@ -36,12 +46,15 @@ interface Entity {
   end?: number;
   confidence?: number;
   label?: string;
+  assertion_status?: string;  // F2c: PRESENT, NEGATED, HYPOTHETICAL, HISTORICAL
 }
 
 interface NerResult {
   entities: Record<string, Entity[]>;
   provider?: string;
   error?: string;
+  custom_labels?: string[];  // F2b: Zero-shot custom labels
+  assertion_enabled?: boolean;  // F2c: Whether assertion was computed
 }
 
 export default function NerPage() {
@@ -49,6 +62,8 @@ export default function NerPage() {
   const [selectedTypes, setSelectedTypes] = useState<string[]>(
     ENTITY_TYPE_OPTIONS.map((e) => e.value)
   );
+  const [customLabels, setCustomLabels] = useState("");  // F2b: Custom zero-shot labels
+  const [enableAssertion, setEnableAssertion] = useState(false);  // F2c: Assertion status
   const [provider, setProvider] = useState("gliner");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<NerResult | null>(null);
@@ -63,13 +78,21 @@ export default function NerPage() {
     setLoading(true);
     setResult(null);
 
+    // Parse custom labels (F2b)
+    const customLabelsArray = customLabels
+      .split(",")
+      .map((l) => l.trim().toUpperCase())
+      .filter((l) => l.length > 0);
+
     try {
       const res = await fetch("/api/ner", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
-          entity_types: selectedTypes.length ? selectedTypes : null,
+          entity_types: customLabelsArray.length > 0 ? null : (selectedTypes.length ? selectedTypes : null),
+          custom_labels: customLabelsArray.length > 0 ? customLabelsArray : null,
+          enable_assertion: enableAssertion,
           provider,
         }),
       });
@@ -112,7 +135,7 @@ export default function NerPage() {
               NER Entity Extraction
             </h1>
             <p style={{ margin: 0, fontSize: "0.875rem", color: "#64748b" }}>
-              Extract medical entities from text — diseases, drugs, genes, anatomy
+              Extract medical entities with assertion status • Standard + Zero-shot custom labels
             </p>
           </div>
         </div>
@@ -248,6 +271,57 @@ export default function NerPage() {
               </div>
             </div>
 
+            {/* F2b: Custom Labels (Zero-shot NER) */}
+            <div className="medical-card" style={{ padding: "1.25rem", background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.625rem" }}>
+                <span style={{ fontSize: "1.125rem" }}>🎯</span>
+                <label style={{ fontSize: "0.875rem", fontWeight: "600", color: "#166534" }}>
+                  Custom Labels (Zero-shot NER)
+                </label>
+              </div>
+              <input
+                type="text"
+                className="medical-input"
+                placeholder="e.g., BRAIN_REGION, BIOMARKER, COGNITIVE_FUNCTION"
+                value={customLabels}
+                onChange={(e) => setCustomLabels(e.target.value)}
+                style={{ fontSize: "0.875rem" }}
+              />
+              <p style={{ fontSize: "0.75rem", color: "#15803d", marginTop: "0.5rem", marginBottom: 0 }}>
+                Enter custom entity types (comma-separated). When provided, standard types are ignored.
+              </p>
+            </div>
+
+            {/* F2c: Assertion Status */}
+            <div className="medical-card" style={{ padding: "1.25rem", background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontSize: "1.125rem" }}>🔍</span>
+                  <label style={{ fontSize: "0.875rem", fontWeight: "600", color: "#1e40af" }}>
+                    Enable Assertion Status
+                  </label>
+                </div>
+                <button
+                  onClick={() => setEnableAssertion(!enableAssertion)}
+                  style={{
+                    padding: "0.375rem 0.75rem",
+                    borderRadius: "6px",
+                    border: `1.5px solid ${enableAssertion ? "#3b82f6" : "#cbd5e1"}`,
+                    background: enableAssertion ? "#3b82f6" : "white",
+                    color: enableAssertion ? "white" : "#64748b",
+                    fontSize: "0.8125rem",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  {enableAssertion ? "ON" : "OFF"}
+                </button>
+              </div>
+              <p style={{ fontSize: "0.75rem", color: "#1e40af", marginTop: "0.5rem", marginBottom: 0 }}>
+                Qualify entities: PRESENT, NEGATED, HYPOTHETICAL, HISTORICAL
+              </p>
+            </div>
+
             {/* Error */}
             {result?.error && (
               <div className="medical-card" style={{ padding: "1.25rem", borderLeft: "4px solid var(--medical-error)" }}>
@@ -300,24 +374,44 @@ export default function NerPage() {
                               </span>
                             </div>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-                              {entities.map((ent, i) => (
-                                <div key={i}
-                                  title={ent.confidence ? `Confidence: ${(ent.confidence * 100).toFixed(0)}%` : undefined}
-                                  style={{
-                                    padding: "0.375rem 0.875rem", borderRadius: "9999px",
-                                    background: style.bg, color: style.color,
-                                    fontSize: "0.875rem", fontWeight: "500",
-                                    border: `1px solid ${style.color}33`,
-                                    display: "flex", alignItems: "center", gap: "0.375rem",
-                                  }}>
-                                  {ent.text}
-                                  {ent.confidence && (
-                                    <span style={{ fontSize: "0.6875rem", opacity: 0.7 }}>
-                                      {(ent.confidence * 100).toFixed(0)}%
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
+                              {entities.map((ent, i) => {
+                                const assertionStyle = ent.assertion_status 
+                                  ? ASSERTION_COLORS[ent.assertion_status] 
+                                  : null;
+                                
+                                return (
+                                  <div key={i}
+                                    title={ent.confidence ? `Confidence: ${(ent.confidence * 100).toFixed(0)}%` : undefined}
+                                    style={{
+                                      padding: "0.375rem 0.875rem", borderRadius: "9999px",
+                                      background: style.bg, color: style.color,
+                                      fontSize: "0.875rem", fontWeight: "500",
+                                      border: `1px solid ${style.color}33`,
+                                      display: "flex", alignItems: "center", gap: "0.375rem",
+                                    }}>
+                                    {ent.text}
+                                    {ent.confidence && (
+                                      <span style={{ fontSize: "0.6875rem", opacity: 0.7 }}>
+                                        {(ent.confidence * 100).toFixed(0)}%
+                                      </span>
+                                    )}
+                                    {/* F2c: Assertion Status Badge */}
+                                    {ent.assertion_status && assertionStyle && (
+                                      <span style={{
+                                        fontSize: "0.625rem",
+                                        fontWeight: "700",
+                                        padding: "0.125rem 0.375rem",
+                                        borderRadius: "4px",
+                                        background: assertionStyle.bg,
+                                        color: assertionStyle.color,
+                                        border: `1px solid ${assertionStyle.color}`,
+                                      }}>
+                                        {ent.assertion_status.charAt(0)}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
