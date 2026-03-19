@@ -1,0 +1,1 @@
+# Wrapper KG pour l'agent
